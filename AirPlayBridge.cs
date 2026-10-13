@@ -291,6 +291,7 @@ public static class Program
         public volatile string PeerMac = "";
         public volatile string PeerV6 = "";
         public volatile string PeerV4 = "";
+        public volatile string ActivePeer = "";
 
         static readonly byte[][] Markers = new byte[][] {
             Encoding.ASCII.GetBytes("OPTIONS "), Encoding.ASCII.GetBytes("SET_PARAMETER "),
@@ -499,6 +500,7 @@ public static class Program
                     PeerMac = sb.ToString();
                 }
                 string peer = NormalizeAddress(src);
+                ActivePeer = src;
                 if (negotiatedAudioPeer != peer)
                 {
                     negotiatedAudioPorts.Clear();
@@ -728,6 +730,8 @@ public static class Program
         public static int Sent, SmtcEvents, KbEvents;
         public static string LastLog = "";
         static readonly object SendLock = new object();
+        static string LastSuccessfulCommand = "", LastSuccessfulSource = "";
+        static DateTime LastSuccessfulAt = DateTime.MinValue;
 
         public static string Send(string cmd, string src)
         {
@@ -738,13 +742,19 @@ public static class Program
 
         static string SendCore(string cmd, string src)
         {
-            if (cmd == null) { LastLog = Stamp() + " unmapped button"; return ""; }
-            if (!Enabled) { LastLog = Stamp() + " " + cmd + " skipped (--no-control)"; return ""; }
+            if (cmd == null) { LastLog = Stamp() + " unmapped button"; return LastLog; }
+            if (!Enabled) { LastLog = Stamp() + " " + cmd + " skipped (--no-control)"; return LastLog; }
             string tok = Token, host = Host; int port = Port;
             if (string.IsNullOrEmpty(tok) || string.IsNullOrEmpty(host) || port == 0)
-            { LastLog = Stamp() + " [" + src + "] " + cmd + " skipped (no Active-Remote/host yet)"; return ""; }
+            { LastLog = Stamp() + " [" + src + "] " + cmd + " skipped (no Active-Remote/host/port)"; return LastLog; }
             lock (SendLock)
             {
+                if (cmd == LastSuccessfulCommand && src != LastSuccessfulSource &&
+                    (DateTime.UtcNow - LastSuccessfulAt).TotalMilliseconds < 250)
+                {
+                    LastLog = Stamp() + " [" + src + "] " + cmd + " deduplicated (same action from " + LastSuccessfulSource + ")";
+                    return LastLog;
+                }
                 try
                 {
                     IPAddress addr;
@@ -764,6 +774,12 @@ public static class Program
                         try { st.ReadTimeout = 1500; n = st.Read(buf, 0, 256); } catch { }
                         string status = n > 0 ? Encoding.ASCII.GetString(buf, 0, n).Split('\r')[0].Trim() : "(no response)";
                         Sent++;
+                        if (status.IndexOf(" 200 ", StringComparison.Ordinal) >= 0)
+                        {
+                            LastSuccessfulCommand = cmd;
+                            LastSuccessfulSource = src;
+                            LastSuccessfulAt = DateTime.UtcNow;
+                        }
                         if (cmd == "play" || cmd == "playresume") St.Status = "Playing";
                         else if (cmd == "pause" || cmd == "stop") St.Status = "Paused";
                         else if (cmd == "playpause") St.Status = (St.Status == "Playing") ? "Paused" : "Playing";
@@ -780,8 +796,7 @@ public static class Program
         public static void UpdatePeerFromRtsp()
         {
             if (Port == 0 || SnifferRef == null) return;
-            string peer = SnifferRef.PeerV4;
-            if (string.IsNullOrEmpty(peer)) peer = Scopeify(SnifferRef.PeerV6);
+            string peer = Scopeify(SnifferRef.ActivePeer);
             if (string.IsNullOrEmpty(peer) || peer == Host) return;
             Host = peer;
             Log("DACP target updated from active RTSP peer: " + Host + ":" + Port);
@@ -796,6 +811,12 @@ public static class Program
                 var want = new[] { "_dacp._tcp.local" };
                 var candidates = new List<IPAddress>();
                 int port = 0; string ip = "";
+                // Prefer the endpoint of the active RTSP peer. Multicast answers may contain
+                // several DACP services when multiple adapters or receivers are present.
+                string activePeer = SnifferRef != null ? SnifferRef.ActivePeer : "";
+                string activeEndpoint;
+                if (!string.IsNullOrEmpty(activePeer) && TryResolvePeer(activePeer, q, timeoutMs, out activeEndpoint))
+                    return activeEndpoint;
                 // 1) multicast (v4 + v6)
                 foreach (var target in new[] { new IPEndPoint(IPAddress.Parse("224.0.0.251"), 5353), new IPEndPoint(IPAddress.Parse("ff02::fb"), 5353) })
                 {
@@ -850,6 +871,38 @@ public static class Program
             catch (Exception ex) { return "EXC " + ex.Message; }
         }
 
+        static bool TryResolvePeer(string peer, byte[] query, int timeoutMs, out string endpoint)
+        {
+            endpoint = "";
+            IPAddress address;
+            if (!IPAddress.TryParse(peer, out address)) return false;
+            try
+            {
+                using (var u = new UdpClient(address.AddressFamily))
+                {
+                    u.Client.ReceiveTimeout = Math.Max(250, Math.Min(900, timeoutMs));
+                    u.Send(query, query.Length, new IPEndPoint(address, 5353));
+                    var end = DateTime.UtcNow.AddMilliseconds(Math.Max(500, Math.Min(1200, timeoutMs)));
+                    while (DateTime.UtcNow < end)
+                    {
+                        IPEndPoint ep = null;
+                        byte[] response;
+                        try { response = u.Receive(ref ep); }
+                        catch (SocketException) { break; }
+                        int port = 0; string host = "";
+                        ParseMdns(response, ref port, ref host, new List<IPAddress>(), "_dacp._tcp.local");
+                        if (port == 0) continue;
+                        Port = port;
+                        Host = Scopeify(peer);
+                        endpoint = Host + ":" + Port;
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
         /// <summary>IPv6 link-local targets need a scope id ("%12") or the connect fails.</summary>
         static string Scopeify(string host)
         {
@@ -880,6 +933,8 @@ public static class Program
 
         static IEnumerable<IPAddress> CandidateList(List<IPAddress> seen)        {
             var list = new List<IPAddress>();
+            var active = SnifferRef != null ? SnifferRef.ActivePeer : "";
+            if (!string.IsNullOrEmpty(active)) { try { var a = IPAddress.Parse(active); if (!list.Contains(a)) list.Add(a); } catch { } }
             foreach (var a in seen) if (!list.Contains(a)) list.Add(a);
             var v6 = SnifferRef != null ? SnifferRef.PeerV6 : "";
             var v4 = SnifferRef != null ? SnifferRef.PeerV4 : "";
@@ -1392,7 +1447,9 @@ public static class Program
     static Sniffer SnifferRef;
     static readonly object DacpLock = new object();
     static Timer AirPlayDiscoveryTimer;
+    static Timer DacpDiscoveryTimer;
     static int AirPlayDiscoveryBusy;
+    static int DacpDiscoveryBusy;
     static DateTime LastDacpTry = DateTime.MinValue;
     static DateTime LastStat = DateTime.MinValue;
     static DateTime LastTimelinePush = DateTime.MinValue;
@@ -1523,6 +1580,7 @@ public static class Program
             Dacp.Enabled = true;
             var d = Dacp.Resolve(6000);
             Log("DACP endpoint: '" + d + "' (host='" + Dacp.Host + "' port=" + Dacp.Port + ")");
+            DacpDiscoveryTimer = new Timer(RefreshDacpEndpoint, null, 30000, 30000);
         }
         else { Dacp.Enabled = false; Log("reverse control DISABLED (--no-control): read-only mirror"); }
 
@@ -1543,6 +1601,21 @@ public static class Program
         }
         catch (Exception ex) { Log("AirPlay mDNS discovery failed: " + ex.Message); }
         finally { Interlocked.Exchange(ref AirPlayDiscoveryBusy, 0); }
+    }
+
+    static void RefreshDacpEndpoint(object ignored)
+    {
+        if (Interlocked.CompareExchange(ref DacpDiscoveryBusy, 1, 0) != 0) return;
+        try
+        {
+            string oldHost = Dacp.Host;
+            int oldPort = Dacp.Port;
+            string endpoint = Dacp.Resolve(2000);
+            if (!string.IsNullOrEmpty(endpoint) && (oldHost != Dacp.Host || oldPort != Dacp.Port))
+                Log("DACP endpoint refreshed: '" + endpoint + "'");
+        }
+        catch (Exception ex) { Log("DACP endpoint refresh failed: " + ex.Message); }
+        finally { Interlocked.Exchange(ref DacpDiscoveryBusy, 0); }
     }
 
     /// <summary>Start Menu shortcut carrying our AUMID: this is the identity the shell's app
