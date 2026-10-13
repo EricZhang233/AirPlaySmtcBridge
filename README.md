@@ -48,7 +48,6 @@ Set-Location .\AirPlaySmtcBridge-main
 
 ```powershell
 git clone --branch main https://github.com/EricZhang233/AirPlaySmtcBridge.git
-Set-Location .\AirPlaySmtcBridge
 ```
 
 在 Visual Studio 中打开 `AirPlaySmtcBridge.csproj`，选择 `Release` 和 `x64` 后生成；也可以运行：
