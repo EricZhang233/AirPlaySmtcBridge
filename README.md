@@ -1,18 +1,16 @@
 # AirPlaySmtcBridge
 
-AirPlaySmtcBridge 是一个 Windows 后台桥接程序：它被动读取本机网络适配器上的 AirPlay/RAOP 流量，并把歌曲信息、封面、播放状态和播放进度发布到 Windows 的系统媒体传输控件（SMTC）。程序本身不接收、播放或转发音频。**本机必须另有 AirPlay 接收软件正在运行并接收 AirPlay 流**；如果没有这样的接收软件，或当前没有活动的 AirPlay 接收会话，本程序就没有可抓取的 AirPlay 流量，媒体信息和控制功能也不会生效。
+AirPlaySmtcBridge 是一个 Windows 后台桥接程序：它被动读取本机网络适配器上的 AirPlay/RAOP 流量，并把歌曲信息、封面、播放状态和播放进度发布到 Windows 的系统媒体传输控件（SMTC）。程序本身不接收、播放或转发音频。
+**本机必须另有 AirPlay 接收软件正在运行并接收 AirPlay 流**；如果没有这样的接收软件，或当前没有活动的 AirPlay 接收会话，本程序就没有可抓取的 AirPlay 流量，媒体信息和控制功能也不会生效。
 
 > 使用前请先运行 AirPlay 接收软件；本程序只抓取流量，不接收 AirPlay。
 
 ## 功能
 
-- 通过 mDNS 查询 `_airplay._tcp` 和 `_raop._tcp` 服务，动态发现接收端公布的 RTSP 端口；同时监听本机 mDNS 广播，以适配 Windows 不回送本机组播查询的情况。未发现服务时回退到 TCP 7000。
 - 从 AirPlay RTSP 流中读取歌曲信息、封面、播放进度和会话状态。
 - 在 Windows 媒体控件中显示歌曲名、艺人、专辑、封面和进度。
 - 将媒体控件中的播放、暂停、上一首、下一首、快退和快进操作通过 AirPlay DACP 发回发送端。
-- 通过大包 UDP 音频流量判断播放状态：检测到音频包时显示“正在播放”，采样期间没有音频包时显示“已暂停”。
-- 将 SMTC 时间轴的最小和最大跳转位置都设为当前播放位置，以保留进度显示并关闭可拖动的跳转范围。
-- 使用 `AirPlaySmtcBridge` 作为进程互斥标识，避免多个实例同时运行。
+
 
 ## 运行要求
 
@@ -76,6 +74,10 @@ dotnet build .\AirPlaySmtcBridge.csproj -c Release -p:Platform=x64
 - 进度条仍显示位置和总时长，但跳转范围被设为零宽；不同 Windows 组件可能有不同的进度条交互表现。
 - 快退和快进按钮保持启用。其具体效果取决于发送设备及 AirPlay/DACP 会话是否支持相应命令。
 - 程序会在 `%TEMP%\eric\AirPlayBridge` 保存运行日志和临时封面文件。
+- 通过大包 UDP 音频流量判断播放状态：检测到音频包时显示“正在播放”，采样期间没有音频包时显示“已暂停”。
+- 将 SMTC 时间轴的最小和最大跳转位置都设为当前播放位置，以保留进度显示并关闭可拖动的跳转范围。
+- 使用 `AirPlaySmtcBridge` 作为进程互斥标识，避免多个实例同时运行。
+- 通过 mDNS 查询 `_airplay._tcp` 和 `_raop._tcp` 服务，动态发现接收端公布的 RTSP 端口；同时监听本机 mDNS 广播，以适配 Windows 不回送本机组播查询的情况。未发现服务时回退到 TCP 7000。
 
 ## 项目文件
 
