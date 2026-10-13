@@ -1,9 +1,8 @@
 # AirPlaySmtcBridge
 
 AirPlaySmtcBridge 是一个 Windows 后台桥接程序：它被动读取本机网络适配器上的 AirPlay/RAOP 流量，并把歌曲信息、封面、播放状态和播放进度发布到 Windows 的系统媒体传输控件（SMTC）。程序本身不接收、播放或转发音频。
-**本机必须另有 AirPlay 接收软件正在运行并接收 AirPlay 流**；如果没有这样的接收软件，或当前没有活动的 AirPlay 接收会话，本程序就没有可抓取的 AirPlay 流量，媒体信息和控制功能也不会生效。
 
-> 使用前请先运行 AirPlay 接收软件；本程序只抓取流量，不接收 AirPlay。
+> **运行前提：** 需另行运行 AirPlay 接收软件；本程序只读取流量，不接收或播放音频。
 
 ## 功能
 
@@ -11,32 +10,56 @@ AirPlaySmtcBridge 是一个 Windows 后台桥接程序：它被动读取本机�
 - 在 Windows 媒体控件中显示歌曲名、艺人、专辑、封面和进度。
 - 将媒体控件中的播放、暂停、上一首、下一首、快退和快进操作通过 AirPlay DACP 发回发送端。
 
-
 ## 运行要求
 
-- 必须另行安装并运行 AirPlay 接收客户端（如[AirServer](https://www.airserver.com/download "建议下载64-Bit版本而非MSIX版本，64位版本支持无界面运行及开机自启，这对音频播放和即用性很友好。")和[爱思投屏](https://www.i4.cn/pro_screen.html)等），由它接收发送设备推送的 AirPlay 流。本程序不提供接收服务；没有活动会话时无法获取 AirPlay 数据。
+- 必须在运行桥接程序的这台电脑上另行安装并运行 AirPlay 接收客户端（如[AirServer](https://www.airserver.com/download "建议下载64-Bit版本而非MSIX版本，64位版本支持无界面运行及开机自启，这对音频播放和即用性很友好。")和[爱思投屏](https://www.i4.cn/pro_screen.html)等），由它接收发送设备推送的 AirPlay 流。本程序不提供接收服务；没有活动会话时无法获取 AirPlay 数据。
 - Windows 10 或 Windows 11（x64）。
 - 本机网络适配器和 Npcap 抓包驱动。程序通过 Npcap 的 `Packet.dll` 被动读取所有可打开的网络适配器上的网络帧。
 - 首次运行如未检测到 Npcap，程序会提示并尝试从 Npcap 官网下载官方安装程序；安装需要在 Windows UAC 提示中由用户确认。程序自身不提权。
-- AirPlay 发送设备与运行桥接程序的电脑应处于可互相通信的网络中。
+- AirPlay 发送设备必须能通过网络发现并连接这台电脑上的本桥接程序和接收客户端；通常需要处于同一局域网，并允许 mDNS 和 AirPlay 流量通过。
 
 ## 构建
 
-仓库包含 C# 源码和 PowerShell 构建脚本。使用 Windows 自带的 .NET Framework C# 编译器构建，不需要安装 .NET SDK：
+本项目不提供预编译的 Release 包。以下两种构建方式分别说明各自需要的源码获取步骤；下载命令适用于公开仓库。
+
+### 普通 Windows 环境（推荐，无需 Git 和其他额外安装，只需要完整的 Windows ）
+
+先下载源码 ZIP 并解压：
+
+在 PowerShell 中下载 `main` 分支并解压到当前目录：
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/EricZhang233/AirPlaySmtcBridge/archive/refs/heads/main.zip" -OutFile AirPlaySmtcBridge-main.zip
+Expand-Archive .\AirPlaySmtcBridge-main.zip -DestinationPath .
+Set-Location .\AirPlaySmtcBridge-main
+```
+
+依赖系统自带的 .NET Framework C# 编译器和 `%WINDIR%\System32\WinMetadata` 元数据，无需安装 .NET SDK：
 
 ```powershell
 .\build-dotnet-framework-csharp.ps1
 ```
 
-构建输出为项目目录下的 `AirPlaySmtcBridge.exe`。需要 `airplay.ico`、`app.manifest`、Windows SDK WinMD 元数据以及系统自带的 .NET Framework 编译器。
+生成文件：`AirPlaySmtcBridge.exe`（项目目录）。
 
-也可以直接用 .NET CLI 构建，或在 Visual Studio 中打开 `AirPlaySmtcBridge.csproj` 并选择 `Release`、`x64`：
+### Visual Studio 或 .NET CLI
+
+先用 Git 克隆仓库：
+
+```powershell
+git clone --branch main https://github.com/EricZhang233/AirPlaySmtcBridge.git
+Set-Location .\AirPlaySmtcBridge
+```
+
+在 Visual Studio 中打开 `AirPlaySmtcBridge.csproj`，选择 `Release` 和 `x64` 后生成；也可以运行：
 
 ```powershell
 dotnet build .\AirPlaySmtcBridge.csproj -c Release -p:Platform=x64
 ```
 
-构建产物位于 `bin\Release\AirPlaySmtcBridge.exe`。需要 .NET SDK、MSBuild 工具和 .NET Framework 4.8 targeting pack。
+生成文件：`bin\Release\AirPlaySmtcBridge.exe`。
+
+此方式需要 .NET SDK、MSBuild 和 .NET Framework 4.8 targeting pack。
 
 ## 启动与参数
 
@@ -65,19 +88,28 @@ dotnet build .\AirPlaySmtcBridge.csproj -c Release -p:Platform=x64
 .\AirPlaySmtcBridge.exe --no-control --verbose
 ```
 
-## 工作方式与限制
+## 开机自启设置
 
-- 程序会同时抓取所有可打开的 Npcap 网络适配器；mDNS 端口查询也会从每个有 IPv4 地址的接口发出。
-- AirPlay 控制端口由接收软件的 mDNS 服务记录提供；程序同时兼容 `_airplay._tcp` 与 `_raop._tcp`。媒体元数据仍需由接收软件以程序支持的 RTSP/DMAP 格式明文发送。
-- 播放进度来自 AirPlay 上报的时间轴；在两次上报之间，Windows 会根据已发布的时间轴继续推进显示。设备上报间隔较长或上报位置与实际声音不同步时，电脑上的显示也可能落后或偏离听感。桥接程序没有实际音频输出时间戳，无法保证消除这类偏差。
-- 暂停状态依据音频 UDP 大包流量推断，不依据进度上报间隔。网络丢包、抓包适配器选择或 Npcap 状态异常都可能影响判断。
-- 进度条仍显示位置和总时长，但跳转范围被设为零宽；不同 Windows 组件可能有不同的进度条交互表现。
-- 快退和快进按钮保持启用。其具体效果取决于发送设备及 AirPlay/DACP 会话是否支持相应命令。
-- 程序会在 `%TEMP%\eric\AirPlayBridge` 保存运行日志和临时封面文件。
-- 通过大包 UDP 音频流量判断播放状态：检测到音频包时显示“正在播放”，采样期间没有音频包时显示“已暂停”。
-- 将 SMTC 时间轴的最小和最大跳转位置都设为当前播放位置，以保留进度显示并关闭可拖动的跳转范围。
-- 使用 `AirPlaySmtcBridge` 作为进程互斥标识，避免多个实例同时运行。
-- 通过 mDNS 查询 `_airplay._tcp` 和 `_raop._tcp` 服务，动态发现接收端公布的 RTSP 端口；同时监听本机 mDNS 广播，以适配 Windows 不回送本机组播查询的情况。未发现服务时回退到 TCP 7000。
+将程序快捷方式放入当前 Windows 用户的“启动”文件夹即可：
+
+1. 按 `Win + R`，输入 `shell:startup` 并按回车，打开当前用户的启动文件夹。
+2. 将 `AirPlaySmtcBridge.exe` 的快捷方式（`.lnk`）复制到该文件夹。可以复制开始菜单中的 `AirPlaySmtcBridge` 快捷方式；如果没有该快捷方式，请右键程序文件，选择“创建快捷方式”，再将创建的快捷方式复制进去。
+3. 下次登录 Windows 时，程序会自动启动。此设置只对当前用户生效；请勿把程序本体移动到启动文件夹。
+
+## 工作方式
+
+- **发现与抓包：** 通过 mDNS 查询 `_airplay._tcp` 和 `_raop._tcp` 服务，动态发现接收端公布的 RTSP 端口；也监听本机 mDNS 广播。未发现服务时回退到 TCP 7000。程序会抓取所有可打开的 Npcap 网络适配器，并从每个有 IPv4 地址的接口发出查询。
+- **媒体信息与控制：** 从接收端发送的 AirPlay RTSP 流中读取媒体信息，并通过 DACP 将媒体控件操作发回发送设备。
+- **播放状态：** 依据发往本机的大包 UDP 音频流量推断；检测到音频包时显示“正在播放”，采样期间没有音频包时显示“已暂停”。
+- **播放进度：** 使用 AirPlay 上报的时间轴；两次上报之间由 Windows 继续推进显示。时间轴跳转范围设为零宽，以保留进度显示并关闭可拖动的跳转范围。
+- **会话与文件：** 使用 `AirPlaySmtcBridge` 作为进程互斥标识，避免多个实例同时运行。运行日志和临时封面保存在 `%TEMP%\eric\AirPlayBridge`。
+
+## 限制
+
+- 媒体元数据依赖接收软件发送本程序支持的明文 RTSP/DMAP 格式。
+- 暂停状态由 UDP 流量推断；网络丢包、Npcap 状态或抓包情况可能导致判断不准。
+- 播放进度取决于设备上报。上报间隔较长或时间轴与实际声音不同步时，显示可能滞后或偏离听感；程序没有音频输出时间戳，无法保证消除偏差。
+- 不同 Windows 组件对零宽跳转范围的进度条交互表现可能不同。快退和快进按钮保持启用，但效果取决于发送设备及 AirPlay/DACP 会话是否支持相应命令。
 
 ## 项目文件
 
